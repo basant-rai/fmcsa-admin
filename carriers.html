@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMCSA Carriers</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7280; --line:#e2e5ea; --accent:#2563eb; --danger:#dc2626; --ok:#16a34a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 auto 0 0; }
+  main { max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  input, select, textarea { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--text); min-width:0; }
+  button { font:inherit; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--danger); border-color:#f3c4c4; }
+  button:disabled { opacity:.5; cursor:default; }
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; white-space:nowrap; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  td.actions { display:flex; gap:6px; }
+  .muted { color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; margin:12px 0 0; padding:10px; }
+  fieldset:disabled { opacity:.7; }
+  .item { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:8px; padding:8px 0; border-bottom:1px dashed var(--line); align-items:end; }
+  .item:last-of-type { border-bottom:0; }
+  .add-btn { margin-top:8px; }
+  .onboard { border-radius:6px; padding:10px 12px; margin-bottom:12px; }
+  .onboard.ok { background:#ecfdf3; border:1px solid #b7ebc9; }
+  .onboard.bad { background:#fef3f2; border:1px solid #f5c2bd; }
+  legend { font-size:12px; color:var(--muted); padding:0 4px; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:6px; overflow:auto; max-height:420px; font-size:12px; margin:0; }
+  #toast { position:fixed; right:16px; bottom:16px; padding:10px 14px; border-radius:6px; color:#fff; display:none; max-width:420px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FMCSA Carriers</h1>
+  <label>API base URL <input id="baseUrl" size="34"></label>
+  <button onclick="saveBase()">Save</button>
+</header>
+
+<main>
+  <!-- LOOKUP (GET /fmcsa/by-identifier: DB first, then Highway API) -->
+  <section class="card">
+    <h2>Get carrier by identifier</h2>
+    <div class="row">
+      <label>Type
+        <select id="lkType"><option>MC</option><option>DOT</option><option>CA</option></select>
+      </label>
+      <label>Value <input id="lkValue" placeholder="12377"></label>
+      <button class="primary" onclick="lookup()">Get</button>
+      <span class="muted">or by ID</span>
+      <label>ID <input id="lkId" type="number" min="1" style="width:100px"></label>
+      <button onclick="viewCarrier(document.getElementById('lkId').value)">View</button>
+    </div>
+  </section>
+
+  <!-- LIST (GET /fmcsa-admin/carriers) -->
+  <section class="card">
+    <h2>Carriers</h2>
+    <div class="row" style="margin-bottom:12px">
+      <label>Name contains <input id="fSearch" placeholder="legal, display or DBA name"></label>
+      <label>MC / DOT / CA <input id="fIdentifier" placeholder="12345" style="width:120px"></label>
+      <label>Page size
+        <select id="pageSize"><option>10</option><option>25</option><option>50</option></select>
+      </label>
+      <button class="primary" onclick="page=1; loadList()">Search</button>
+      <button onclick="openForm()">+ Add carrier</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Legal name</th><th>Identifiers</th><th>Fleet</th><th>Updated</th><th></th></tr></thead>
+        <tbody id="rows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:12px; align-items:center">
+      <button id="prevBtn" onclick="page--; loadList()">‹ Prev</button>
+      <span id="pageInfo" class="muted"></span>
+      <button id="nextBtn" onclick="page++; loadList()">Next ›</button>
+    </div>
+  </section>
+
+  <!-- CREATE / UPDATE (POST /fmcsa-admin/carriers, PATCH /fmcsa-admin/carriers/:id) -->
+  <section class="card hidden" id="formCard">
+    <h2 id="formTitle">Add carrier</h2>
+    <form id="form" onsubmit="submitForm(event)">
+      <div class="grid">
+        <label>Legal name * <input name="legalName" required></label>
+        <label>Display name * <input name="name" required></label>
+        <label>DBA name <input name="dbaName"></label>
+        <label>Fleet size <input name="fleetSize" type="number" min="0"></label>
+        <label>Source ID <input name="sourceId" type="number" placeholder="auto"></label>
+        <label><span><input type="checkbox" name="isExcludedFromSourcingQueries"> Excluded from sourcing</span></label>
+        <label><span><input type="checkbox" name="isEmailRequiredForLogin"> Email required for login</span></label>
+      </div>
+
+      <p id="editNote" class="muted hidden" style="margin:12px 0 0">Only the sections you change are saved. A changed section replaces that carrier's existing rows, and a later Highway sync won't overwrite it.</p>
+      <div id="nestedFields"></div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="primary" type="submit" id="submitBtn">Save</button>
+        <button type="button" onclick="closeForm()">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- VIEW -->
+  <section class="card hidden" id="viewCard">
+    <div class="row" style="justify-content:space-between; margin-bottom:12px">
+      <h2 id="viewTitle" style="margin:0">Carrier</h2>
+      <div class="row">
+        <button id="viewSync">Sync from Highway</button>
+        <button id="viewEdit">Edit</button>
+        <button onclick="hide('viewCard')">Close</button>
+      </div>
+    </div>
+    <div id="onboardBox" class="onboard"></div>
+    <pre id="viewBody"></pre>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+  const DEFAULT_BASE = 'https://services.supertruck.ai/fmcsa/api/v1';
+  // Form CRUD goes through the admin routes; /fmcsa (used by st-onboarding-service) is only read.
+  const ADMIN = '/fmcsa-admin/carriers';
+  let page = 1, editingId = null, editSnapshot = null;
+  const $ = (id) => document.getElementById(id);
+  const hide = (id) => $(id).classList.add('hidden');
+  const show = (id) => $(id).classList.remove('hidden');
+
+  function getBase() {
+    try { return localStorage.getItem('fmcsaBase') || DEFAULT_BASE; } catch { return DEFAULT_BASE; }
+  }
+  function saveBase() {
+    try { localStorage.setItem('fmcsaBase', $('baseUrl').value.trim().replace(/\/+$/, '')); } catch {}
+    page = 1; loadList();
+  }
+
+  function toast(msg, ok = true) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.style.background = ok ? 'var(--ok)' : 'var(--danger)';
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => (t.style.display = 'none'), 5000);
+  }
+
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  // All responses are wrapped by ResponseInterceptor: { message, data, pagination? }
+  async function api(path, options = {}) {
+    const res = await fetch(getBase() + path, {
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      ...options,
+    });
+    if (res.status === 204) return null;
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 404 && path.startsWith(ADMIN) && /Cannot (GET|POST|PATCH|DELETE)/.test(body.message || '')) {
+        throw new Error('This server has no /fmcsa-admin routes yet. Deploy the new fmcsa-proxy build or point the base URL at a local one.');
+      }
+      let msg = Array.isArray(body.message) ? body.message.join(', ') : body.message || res.statusText;
+      if (body.details) msg += ' ' + JSON.stringify(body.details);
+      throw new Error(`${res.status}: ${msg}`);
+    }
+    return body;
+  }
+
+  async function loadList() {
+    const size = Number($('pageSize').value);
+    const q = new URLSearchParams({ page, pageSize: size });
+    if ($('fSearch').value.trim()) q.set('search', $('fSearch').value.trim());
+    if ($('fIdentifier').value.trim()) q.set('identifier', $('fIdentifier').value.trim());
+    try {
+      const body = await api(`${ADMIN}?${q}`);
+      const list = Array.isArray(body?.data) ? body.data : [];
+      const total = body?.pagination?.totalItems ?? list.length;
+      const pages = Math.max(1, Math.ceil(total / size));
+      $('rows').innerHTML = list.length ? list.map(rowHtml).join('') :
+        '<tr><td colspan="7" class="muted">No carriers found.</td></tr>';
+      $('pageInfo').textContent = `Page ${page} of ${pages} · ${total} total`;
+      $('prevBtn').disabled = page <= 1;
+      $('nextBtn').disabled = page >= pages;
+    } catch (e) {
+      $('rows').innerHTML = `<tr><td colspan="7" style="color:var(--danger)">${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  function rowHtml(c) {
+    const ids = (c.identifiers || []).map((i) => `${esc(i.isType)} ${esc(i.valueNonPadded || i.value)}`).join(', ');
+    return `<tr>
+      <td>${c.id}</td>
+      <td>${esc(c.name)}</td>
+      <td>${esc(c.legalName)}</td>
+      <td>${ids || '<span class="muted">—</span>'}</td>
+      <td>${esc(c.fleetSize ?? '—')}</td>
+      <td class="muted">${c.updatedAt ? new Date(c.updatedAt).toLocaleString() : ''}</td>
+      <td class="actions">
+        <button onclick="viewCarrier(${c.id})">View</button>
+        <button onclick="editCarrier(${c.id})">Edit</button>
+        <button class="danger" onclick="deleteCarrier(${c.id})">Delete</button>
+      </td>
+    </tr>`;
+  }
+
+  function showCarrier(c) {
+    if (!c) return toast('No carrier returned', false);
+    $('viewTitle').textContent = `#${c.id} · ${c.name || c.legalName}`;
+    $('viewBody').textContent = JSON.stringify(c, null, 2);
+    renderOnboardCheck(c);
+    $('viewEdit').onclick = () => editCarrier(c.id);
+    $('viewSync').onclick = () => syncCarrier(c.id);
+    show('viewCard');
+    $('viewCard').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // Mirrors what st-onboarding-service (mapFmcsaToOnboarding) reads from the by-identifier response.
+  function renderOnboardCheck(c) {
+    const box = $('onboardBox');
+    const problems = [];
+    if (c.additionalData == null || typeof c.additionalData !== 'object') {
+      problems.push('additionalData is empty, so the onboarding service will crash. Click Edit, then Save, to fill it in.');
+    }
+    if (!(c.identifiers || []).some((i) => i.isType === 'MC' || i.isType === 'DOT')) problems.push('No MC or DOT identifier.');
+    if (!(c.emailAddresses || []).length) problems.push('No email address (onboarding email will be empty).');
+    if (!(c.phones || []).length) problems.push('No phone (onboarding phone will be empty).');
+
+    box.className = problems.length ? 'onboard bad' : 'onboard ok';
+    box.innerHTML = problems.length
+      ? `<strong>Not ready for onboarding</strong><ul style="margin:6px 0 0">${problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>`
+      : '<strong>Onboarding ready.</strong> st-onboarding-service can read this carrier.';
+  }
+
+  async function fetchCarrier(id) {
+    const c = (await api(`${ADMIN}/${encodeURIComponent(id)}`))?.data;
+    if (!c) throw new Error('Carrier not found');
+    return c;
+  }
+
+  async function viewCarrier(id) {
+    if (!id) return toast('Enter an ID', false);
+    try { showCarrier(await fetchCarrier(id)); }
+    catch (e) { toast(e.message, false); }
+  }
+
+  // Read-only use of the existing endpoint (checks the DB first, then imports from Highway).
+  async function lookup() {
+    const value = $('lkValue').value.trim();
+    if (!value) return toast('Enter an identifier value', false);
+    const q = new URLSearchParams({ is_type: $('lkType').value, value });
+    try {
+      const found = (await api('/fmcsa/by-identifier?' + q))?.data;
+      if (!found?.id) return showCarrier(found);
+      showCarrier(await fetchCarrier(found.id));
+      loadList();
+    }
+    catch (e) { toast(e.message, false); }
+  }
+
+  async function editCarrier(id) {
+    try { openForm(await fetchCarrier(id)); }
+    catch (e) { toast(e.message, false); }
+  }
+
+  // Nested sections of CreateCarrierDto. `many: false` means a single object (billingContacts).
+  const TYPE_OPTS = { identifiers: ['MC', 'DOT', 'CA'], addresses: ['physical', 'mailing'] };
+  const SECTIONS = [
+    { key: 'identifiers', title: 'Identifiers', many: true, fields: [
+      { name: 'isType', label: 'Type *', options: TYPE_OPTS.identifiers, required: true },
+      { name: 'valueNonPadded', label: 'Number *', required: true, placeholder: '12345' },
+      { name: 'value', label: 'Padded number', placeholder: 'auto: 012345' },
+      { name: 'isManuallyCreated', label: 'Manually created', type: 'checkbox', default: true },
+    ] },
+    { key: 'addresses', title: 'Addresses', many: true, fields: [
+      { name: 'isType', label: 'Type *', options: TYPE_OPTS.addresses, required: true },
+      { name: 'nationality', label: 'Nationality', placeholder: 'US' },
+      { name: 'street1', label: 'Street 1 *', required: true },
+      { name: 'street2', label: 'Street 2' },
+      { name: 'city', label: 'City *', required: true },
+      { name: 'state', label: 'State *', required: true, placeholder: 'CA' },
+      { name: 'postalCode', label: 'Postal code *', required: true },
+    ] },
+    { key: 'phones', title: 'Phones', many: true, fields: [
+      { name: 'value', label: 'Phone * (what onboarding uses)', required: true, placeholder: '9845987303' },
+      { name: 'phoneE164', label: 'E.164', placeholder: 'auto: +9845987303' },
+      { name: 'isType', label: 'Type', placeholder: 'office' },
+    ] },
+    { key: 'emailAddresses', title: 'Emails', many: true, fields: [
+      { name: 'value', label: 'Email *', type: 'email', required: true },
+      { name: 'isType', label: 'Type', placeholder: 'office' },
+    ] },
+    { key: 'billingContacts', title: 'Billing contact', many: false, fields: [
+      { name: 'name', label: 'Name' },
+      { name: 'email', label: 'Email', type: 'email' },
+      { name: 'phone', label: 'Phone' },
+    ] },
+    { key: 'insights', title: 'Insights', many: true, fields: [
+      { name: 'isType', label: 'Type *', required: true, placeholder: 'safety_rating' },
+      { name: 'value', label: 'Value *', required: true, placeholder: 'Satisfactory' },
+      { name: 'severity', label: 'Severity', placeholder: 'low' },
+      { name: 'details', label: 'Details' },
+    ] },
+  ];
+
+  function renderSections(c) {
+    $('nestedFields').innerHTML = SECTIONS.map((s) => `
+      <fieldset data-section="${s.key}">
+        <legend>${s.title}</legend>
+        <div class="items"></div>
+        ${s.many ? `<button type="button" class="add-btn" onclick="addItem('${s.key}')">+ Add ${s.title.toLowerCase().replace(/s$/, '')}</button>` : ''}
+      </fieldset>`).join('');
+    for (const s of SECTIONS) {
+      const value = c?.[s.key];
+      if (s.many) (Array.isArray(value) ? value : []).forEach((v) => addItem(s.key, v));
+      else addItem(s.key, value || {});
+    }
+  }
+
+  function addItem(key, data = null) {
+    const s = SECTIONS.find((x) => x.key === key);
+    const box = document.querySelector(`[data-section="${key}"] .items`);
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = s.fields.map((fd) => {
+      const val = data ? data[fd.name] : fd.default;
+      if (fd.type === 'checkbox') {
+        return `<label><span><input type="checkbox" data-f="${fd.name}" ${val ? 'checked' : ''}> ${fd.label}</span></label>`;
+      }
+      if (fd.options) {
+        return `<label>${fd.label}<select data-f="${fd.name}">${fd.options.map((o) =>
+          `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}</select></label>`;
+      }
+      const shown = typeof val === 'object' && val !== null ? JSON.stringify(val) : (val ?? '');
+      return `<label>${fd.label}<input data-f="${fd.name}" type="${fd.type || 'text'}"
+        ${fd.required && s.many ? 'required' : ''} placeholder="${esc(fd.placeholder || '')}" value="${esc(shown)}"></label>`;
+    }).join('') + (s.many ? `<button type="button" class="danger" onclick="this.parentElement.remove()">Remove</button>` : '');
+    box.appendChild(div);
+  }
+
+  function readItem(div, s) {
+    const o = {};
+    for (const fd of s.fields) {
+      const el = div.querySelector(`[data-f="${fd.name}"]`);
+      if (fd.type === 'checkbox') o[fd.name] = el.checked;
+      else if (el.value.trim()) o[fd.name] = el.value.trim();
+    }
+    return o;
+  }
+
+  // Returns every section: arrays for list sections, an object or null for billingContacts.
+  function readSections() {
+    const out = {};
+    for (const s of SECTIONS) {
+      const items = [...document.querySelectorAll(`[data-section="${s.key}"] .item`)].map((d) => readItem(d, s));
+      if (s.key === 'identifiers') {
+        items.forEach((i) => {
+          i.valueNonPadded = String(i.valueNonPadded).replace(/^0+(?=\d)/, '');
+          i.value = i.value || i.valueNonPadded.padStart(6, '0');
+        });
+      }
+      if (s.key === 'phones') {
+        items.forEach((p) => { p.phoneE164 = p.phoneE164 || '+' + p.value.replace(/\D/g, ''); });
+      }
+      if (s.key === 'addresses') items.forEach((a) => { a.state = a.state.toUpperCase(); });
+      out[s.key] = s.many ? items : (Object.values(items[0] || {}).some(Boolean) ? items[0] : null);
+    }
+    return out;
+  }
+
+  function readScalars(f) {
+    const v = (n) => f[n].value.trim();
+    return {
+      legalName: v('legalName'),
+      name: v('name'),
+      dbaName: v('dbaName') || undefined,
+      fleetSize: v('fleetSize') ? Number(v('fleetSize')) : undefined,
+      isExcludedFromSourcingQueries: f.isExcludedFromSourcingQueries.checked,
+      isEmailRequiredForLogin: f.isEmailRequiredForLogin.checked,
+    };
+  }
+
+  function openForm(c = null) {
+    const f = $('form');
+    f.reset();
+    editingId = c ? c.id : null;
+    $('formTitle').textContent = c ? `Edit carrier #${c.id}` : 'Add carrier';
+    renderSections(c);
+    // The onboarding service needs an MC/DOT identifier, an email and a phone, so start with one of each.
+    if (!c) ['identifiers', 'emailAddresses', 'phones'].forEach((k) => addItem(k));
+    $('editNote').classList.toggle('hidden', !c);
+    f.sourceId.disabled = !!c;
+    if (c) {
+      f.legalName.value = c.legalName || '';
+      f.name.value = c.name || '';
+      f.dbaName.value = c.dbaName || '';
+      f.fleetSize.value = c.fleetSize ?? '';
+      f.sourceId.value = c.sourceId ?? '';
+      f.isExcludedFromSourcingQueries.checked = !!c.isExcludedFromSourcingQueries;
+      f.isEmailRequiredForLogin.checked = !!c.isEmailRequiredForLogin;
+    }
+    // Remember what was loaded so an edit only sends what changed.
+    editSnapshot = c ? { ...readScalars(f), ...readSections(), needsAdditionalData: c.additionalData == null } : null;
+    show('formCard');
+    $('formCard').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function closeForm() { hide('formCard'); editingId = null; editSnapshot = null; }
+
+  function buildPayload(f) {
+    const current = { ...readScalars(f), ...readSections() };
+    if (!editingId) {
+      const p = { ...current, sourceId: f.sourceId.value.trim() ? Number(f.sourceId.value) : Date.now() };
+      if (!p.billingContacts) delete p.billingContacts;
+      return p;
+    }
+    const changed = {};
+    for (const [key, value] of Object.entries(current)) {
+      if (JSON.stringify(value) !== JSON.stringify(editSnapshot[key])) changed[key] = value;
+    }
+    // Saving with nothing changed still fills in a missing additionalData from the saved emails/phones.
+    if (!Object.keys(changed).length && editSnapshot.needsAdditionalData) {
+      changed.emailAddresses = current.emailAddresses;
+      changed.phones = current.phones;
+    }
+    return changed;
+  }
+
+  async function submitForm(e) {
+    e.preventDefault();
+    const btn = $('submitBtn');
+    btn.disabled = true;
+    try {
+      const payload = buildPayload($('form'));
+      const missing = ['identifiers', 'emailAddresses', 'phones'].filter((k) => k in payload || !editingId).filter((k) => !payload[k]?.length);
+      if (missing.length) throw new Error(`Onboarding test data needs at least one: ${missing.join(', ')}`);
+      if (editingId && !Object.keys(payload).length) {
+        toast('Nothing changed');
+        return;
+      }
+      const body = editingId
+        ? await api(`${ADMIN}/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) })
+        : await api(ADMIN, { method: 'POST', body: JSON.stringify(payload) });
+      toast(editingId ? 'Carrier updated' : 'Carrier created');
+      closeForm();
+      loadList();
+      if (body?.data?.id) showCarrier(body.data);
+    } catch (err) {
+      toast(err.message, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteCarrier(id) {
+    if (!confirm(`Delete carrier #${id}? (soft delete)`)) return;
+    try {
+      await api(`${ADMIN}/${id}`, { method: 'DELETE' });
+      toast('Carrier deleted');
+      hide('viewCard');
+      loadList();
+    } catch (e) { toast(e.message, false); }
+  }
+
+  async function syncCarrier(id) {
+    if (!confirm('Replace this carrier with fresh Highway data? Manually edited fields are kept.')) return;
+    try {
+      await api(`/fmcsa/${id}/sync`, { method: 'PUT' });
+      showCarrier(await fetchCarrier(id));
+      toast('Synced from Highway');
+    } catch (e) { toast(e.message, false); }
+  }
+
+  $('baseUrl').value = getBase();
+  loadList();
+</script>
+</body>
+</html>
